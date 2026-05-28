@@ -1,0 +1,379 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  emailVerified  DateTime?
+  hashedPassword String?
+  imageUrl       String?   @default("")
+  bannerUrl      String?   @db.Text
+  bio            String?   @db.Text
+  status         UserStatus @default(OFFLINE)
+  statusText     String?    @db.Text
+  lastActiveAt   DateTime   @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  accounts       Account[]
+  servers        Server[]
+  members        Member[]
+  channels       Channel[]
+  directMessages DirectMessage[]
+  reactions      MessageReaction[]
+  notifications  Notification[]
+  initiatedNotifications Notification[] @relation("NotificationActor")
+  pinnedMessages Message[] @relation("MessagePinnedBy")
+  auditActions   AuditLog[]
+  auditTargets   AuditLog[] @relation("AuditTargetUser")
+  channelReadStates ChannelReadState[]
+  conversationReadStates ConversationReadState[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+enum MemberRole {
+  ADMIN
+  MODERATOR
+  GUEST
+}
+
+enum ChannelType {
+  TEXT
+  AUDIO
+  VIDEO
+}
+
+enum UserStatus {
+  ONLINE
+  IDLE
+  BUSY
+  OFFLINE
+}
+
+enum NotificationType {
+  MENTION
+  ROLE_MENTION
+  EVERYONE_MENTION
+  HERE_MENTION
+  PINNED
+  MODERATION
+  SYSTEM
+}
+
+enum ServerPermission {
+  MANAGE_SERVER
+  MANAGE_CHANNELS
+  MANAGE_MESSAGES
+  MANAGE_MEMBERS
+  MENTION_EVERYONE
+  PIN_MESSAGES
+  SEND_MESSAGES
+}
+
+enum AuditAction {
+  ROLE_CREATED
+  ROLE_UPDATED
+  ROLE_ASSIGNED
+  ROLE_REMOVED
+  MEMBER_MUTED
+  MEMBER_UNMUTED
+  MEMBER_TIMEOUT
+  MEMBER_KICKED
+  MEMBER_BANNED
+  MEMBER_UNBANNED
+  MESSAGE_PINNED
+  MESSAGE_UNPINNED
+}
+
+model Server {
+  id         String   @id @default(cuid())
+  name       String
+  imageUrl   String   @db.Text
+  inviteCode String   @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  members  Member[]
+  channels Channel[]
+  roles    Role[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Member {
+  id   String     @id @default(cuid())
+  role MemberRole @default(GUEST)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  serverId String
+  server   Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  mutedUntil DateTime?
+  bannedAt   DateTime?
+  assignedRoles MemberRoleLink[]
+
+  messages Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([serverId])
+}
+
+model Channel {
+  id   String      @id @default(cuid())
+  name String
+  type ChannelType @default(TEXT)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  serverId String
+  server   Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  messages Message[]
+  permissionOverwrites PermissionOverwrite[]
+  readStates ChannelReadState[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([serverId])
+}
+
+model ChannelReadState {
+  id         String   @id @default(cuid())
+  userId     String
+  channelId  String
+  lastReadAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channelId])
+  @@index([userId])
+  @@index([channelId])
+}
+
+model Message {
+  id      String  @id @default(cuid())
+  content String  @db.Text
+  fileUrl String? @db.Text
+
+  memberId String
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  parentMessageId String?
+  parentMessage   Message?  @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies         Message[] @relation("MessageReplies")
+
+  reactions      MessageReaction[]
+  notifications  Notification[]
+  pinnedBy       User? @relation("MessagePinnedBy", fields: [pinnedById], references: [id], onDelete: SetNull)
+  pinnedById     String?
+  pinnedAt       DateTime?
+  isPinned       Boolean @default(false)
+
+  deleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([channelId])
+  @@index([memberId])
+  @@index([parentMessageId])
+  @@index([isPinned, channelId])
+}
+
+model Conversation {
+  id String @id @default(cuid())
+
+  memberOneId String
+  memberTwoId String
+
+  directMessages DirectMessage[]
+  readStates     ConversationReadState[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([memberOneId, memberTwoId])
+  @@index([memberOneId])
+  @@index([memberTwoId])
+}
+
+model ConversationReadState {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String
+  lastReadAt     DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model DirectMessage {
+  id      String  @id @default(cuid())
+  content String  @db.Text
+  fileUrl String? @db.Text
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  deleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model MessageReaction {
+  id String @id @default(cuid())
+
+  emoji String
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, messageId, emoji])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model Notification {
+  id      String           @id @default(cuid())
+  type    NotificationType @default(MENTION)
+  content String           @db.Text
+  read    Boolean          @default(false)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  actorId String?
+  actor   User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  messageId String?
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String
+  color       String?
+  isDefault   Boolean  @default(false)
+  position    Int      @default(0)
+  permissions ServerPermission[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  serverId String
+  server   Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  members     MemberRoleLink[]
+  overwrites  PermissionOverwrite[]
+
+  @@index([serverId, position])
+  @@unique([serverId, name])
+}
+
+model MemberRoleLink {
+  id        String   @id @default(cuid())
+  memberId  String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, roleId])
+  @@index([roleId])
+}
+
+model PermissionOverwrite {
+  id                  String             @id @default(cuid())
+  allow               ServerPermission[]
+  deny                ServerPermission[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  channelId           String
+  channel             Channel            @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  roleId              String
+  role                Role               @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, roleId])
+  @@index([roleId])
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  action    AuditAction
+  details   String?     @db.Text
+  createdAt DateTime    @default(now())
+
+  serverId  String
+  server    Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  actorId   String?
+  actor     User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  targetUserId String?
+  targetUser   User?     @relation("AuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([serverId, createdAt])
+  @@index([actorId])
+}
